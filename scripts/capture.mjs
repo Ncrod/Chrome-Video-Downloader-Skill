@@ -12,6 +12,7 @@ import { writeFileSync, readFileSync } from "node:fs";
 const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i > 0 ? process.argv[i + 1] : d; };
 const port = arg("port", "9222");
 const seconds = Number(arg("seconds", "20"));
+const idleSkip = Number(arg("idle-skip", "8")); // seconds to wait for any player before calling a page "no-player"
 const out = arg("out", "jobs.captured.json");
 const jobs = arg("jobs")
   ? JSON.parse(readFileSync(arg("jobs"), "utf8"))
@@ -73,13 +74,25 @@ for (const job of jobs) {
   await new Promise(r => setTimeout(r, 4000));
   // muted autoplay so the player requests its manifest; applies to the main frame and attached frames
   await send("Runtime.evaluate", { expression: PLAY });
+  const evalMain = async expr => (await send("Runtime.evaluate", { expression: expr, returnByValue: true }))?.result?.value;
+  const PLAYER = "!!document.querySelector('video, iframe[src^=\"http\"]:not([src*=\"sso.\"]):not([src*=\"googletagmanager\"])')";
+  // text-only pages have no player: do not burn the full capture window on them
+  let hasPlayer = false;
+  for (let i = 0; i < idleSkip * 2 && !hasPlayer && !found.length; i++) { hasPlayer = await evalMain(PLAYER); if (!hasPlayer) await new Promise(r => setTimeout(r, 500)); }
   const end = Date.now() + seconds * 1000;
-  while (Date.now() < end && !found.length) await new Promise(r => setTimeout(r, 500));
+  while ((hasPlayer || found.length) && Date.now() < end && !found.length) await new Promise(r => setTimeout(r, 500));
   await new Promise(r => setTimeout(r, 1500));
   const best = [...found].sort((a, b) => rank(a) - rank(b))[0];
+  const iframes = (await evalMain("JSON.stringify([...document.querySelectorAll('iframe')].map(f=>f.src).filter(u=>/^https?:/.test(u)))")) || "[]";
+  const srcs = JSON.parse(iframes);
+  const hosts = [...new Set(srcs.map(u => { try { return new URL(u).host; } catch { return ""; } }))].filter(Boolean);
+  // the video belongs to THIS page if one iframe's last path segment (the player id) appears in the media URL
+  const ids = srcs.map(u => { try { return new URL(u).pathname.split("/").filter(Boolean).pop(); } catch { return null; } }).filter(Boolean);
+  const idMatch = !!best && ids.some(x => x.length > 5 && best.url.includes(x));
+  const note = best ? (idMatch ? "player-id-match" : "no-id-match") : (hasPlayer ? `no-media (frames: ${hosts.join(", ")})` : "no-player");
   result.push({ ...job, media_url: best?.url ?? null, kind: best ? kindOf(best.url) : null,
-    referer: best?.referer ?? "", origin: best?.origin ?? "", candidates: found.length });
-  console.log(`${best ? "OK  " : "MISS"} ${job.name}  ${best ? kindOf(best.url) : "no media request seen"}`);
+    referer: best?.referer ?? "", origin: best?.origin ?? "", candidates: found.length, note, id_match: idMatch });
+  console.log(`${best ? "OK  " : "MISS"} ${job.name}  ${best ? kindOf(best.url) + " " + note : note}`);
 }
 writeFileSync(out, JSON.stringify(result, null, 2));
 console.log(`Wrote ${out} (contains signed URLs: do not share or commit).`);

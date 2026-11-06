@@ -17,8 +17,9 @@ npx skills add https://github.com/Ncrod/Chrome-Video-Downloader-Skill
 
 or copy this folder to `~/.claude/skills/chrome-video-downloader-skill/`.
 
-Requirements: Node 22+, Python 3, [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) and
-[`ffmpeg`](https://ffmpeg.org) (Windows: `winget install yt-dlp.yt-dlp Gyan.FFmpeg`), Google Chrome.
+Requirements: Node 22+, Python 3, [`yt-dlp`](https://github.com/yt-dlp/yt-dlp),
+[`ffmpeg`](https://ffmpeg.org) (Windows: `winget install yt-dlp.yt-dlp Gyan.FFmpeg`), `pycryptodomex`
+(`pip install pycryptodomex`, makes encrypted HLS download fragments in parallel) and Google Chrome.
 
 ## Use
 
@@ -28,6 +29,15 @@ Ask Claude, for example: *"Download my course from <url> into `D:\Videos\Course`
 2. List the lessons and capture each stream (`scripts/capture.mjs`).
 3. Download them (`scripts/download.py`), resumable, with a `manifest.json` (status, size, duration per video).
 4. Verify titles against the videos and report what is ok, failed, or needs a look.
+
+## Speed
+
+- Several videos download **at the same time** (`--parallel`, default 3), **smallest first**, so short videos are
+  finished while the big ones run.
+- Each video downloads its HLS fragments **concurrently** (`--fragments`, default 8). Without `pycryptodomex`,
+  yt-dlp hands encrypted HLS to ffmpeg, which fetches one fragment at a time and is far slower.
+- Pages without a player are skipped in seconds, and each captured video is matched to the player embedded in
+  its own page, so titles and videos stay paired.
 
 ## Rules built in
 

@@ -18,7 +18,7 @@ Hotmart Club (see `hotmart.md`).
    folder, not in the user's project or the output folder. Signed URLs expire, so download right after capturing.
 4. **The user logs in.** Never type passwords. Ask them to sign in inside the debug Chrome window.
 5. **Ask for the output folder** if they did not give one. Do not install software without saying so
-   (needs `yt-dlp`, `ffmpeg`, Node 22+; offer `winget install yt-dlp.yt-dlp Gyan.FFmpeg`).
+   (needs `yt-dlp`, `ffmpeg`, `pycryptodomex`, Node 22+; offer `winget install yt-dlp.yt-dlp Gyan.FFmpeg` and `pip install pycryptodomex`).
 
 ## Workflow
 1. **Debug Chrome.** `node scripts/launch-chrome.mjs --url <site>` opens a *separate* Chrome window (own profile,
@@ -29,10 +29,21 @@ Hotmart Club (see `hotmart.md`).
    title, prefixed with its order number, so files sort correctly. `expected_seconds` is optional but enables
    the duration check.
 3. **Capture:** `node scripts/capture.mjs --jobs jobs.json --out jobs.captured.json --seconds 20`
-   Each line prints `OK hls` or `MISS`. For a `MISS`, open that lesson, press play in the debug window and retry
+   Pages with no player are skipped fast (`--idle-skip`, default 8 s). Each line prints `OK hls player-id-match` or
+   `MISS no-player`. `player-id-match` means the video URL contains the id of the player embedded in THAT lesson page
+   (strong proof that title and video belong together); `no-id-match` needs a manual look. For a `MISS`, open that lesson, press play in the debug window and retry
    just that job (some players only request the manifest after a click).
-4. **Download:** `python scripts/download.py --jobs jobs.captured.json --out "<folder>"`
-   Resumable (skips `status: ok`). Writes `<folder>/manifest.json` with size, duration and status per video.
+4. **Download:** `python scripts/download.py --jobs jobs.captured.json --out "<folder>" [--parallel 3] [--fragments 8]`
+   Fast and resumable (skips `status: ok`):
+   - Downloads **several videos at once** (`--parallel`, default 3) and starts with the **smallest** (size is
+     estimated from the manifest: bandwidth x duration), so quick ones are done and usable while big ones run.
+   - Each video fetches its HLS **fragments concurrently** (`--fragments`, default 8) with yt-dlp's native
+     downloader. This needs `pycryptodomex` for AES-128 streams (`pip install pycryptodomex`). Without it yt-dlp
+     falls back to ffmpeg, one fragment at a time, which is many times slower (a 1 GB video took ~15 min instead
+     of ~1 min). The script warns if it is missing; install it (tell the user) before a big batch.
+   - Writes `manifest.json` (or `--manifest <path>` to keep it out of the video folder) with size, duration and
+     status per video.
+   - Large batches: capture and download in chunks of ~8 lessons, because signed URLs expire.
 5. **Verify, do not assume.** For each video: statuses must be `ok`; `check-duration` means the length differs
    from the list by more than 5% (maybe the wrong video, or the list belongs to the neighbouring lesson, as
    happened on Hotmart where "Tocando ahora" hides the current duration). Extract a frame near the start and
